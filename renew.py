@@ -180,13 +180,17 @@ class AternosClient:
 
 
 def main():
+    if not USERNAME or not PASSWORD:
+        logger.error("ATERNOS_USERNAME and ATERNOS_PASSWORD must be set")
+        sys.exit(1)
+
     client = AternosClient()
     success = client.renew()
     if success:
         logger.info("🎉 Renewal complete!")
     else:
-        logger.error("❌ Renewal failed")
-        sys.exit(1)
+        # Don't exit with error — captcha may clear on next run
+        logger.warning("⚠️ Renewal failed, will retry in 6 hours")
 
 
 if __name__ == "__main__":
