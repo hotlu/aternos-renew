@@ -28,9 +28,22 @@ logger = logging.getLogger(__name__)
 
 USERNAME = os.environ.get("ATERNOS_USERNAME", "")
 PASSWORD = os.environ.get("ATERNOS_PASSWORD", "")
-AJAX_TOKEN = "Kg5pUrtEcWixTBzGuE51"
+AJAX_TOKEN = "Kg5pUrtEcWixTBzGuE51"  # fallback
 HCAPTCHA_SITEKEY = "ecf33f35-4807-4dcb-bd09-bcaf874e69cc"
 CLOUDFLYER_URL = os.environ.get("CLOUDFLYER_URL", "http://localhost:3000")
+
+
+def get_ajax_token(session) -> str:
+    """Extract fresh AJAX token from the page."""
+    import re
+    try:
+        resp = session.get(f"https://aternos.org/go")
+        match = re.search(r'AJAX_TOKEN.*?["\']([A-Za-z0-9]{15,25})["\']', resp.text)
+        if match:
+            return match.group(1)
+    except Exception:
+        pass
+    return AJAX_TOKEN
 
 
 def random_string(length: int = 16) -> str:
@@ -63,7 +76,13 @@ class AternosClient:
                 "Origin": self.BASE_URL,
             },
         )
-        return resp.json()
+        try:
+            return resp.json()
+        except Exception:
+            # Response might be HTML (error page) or empty
+            text = resp.text[:200]
+            logger.error(f"Non-JSON response from {endpoint}: {text}")
+            return {"success": False, "error": f"Non-JSON response: {text[:80]}"}
 
     def _solve_hcaptcha(self) -> str | None:
         """Solve hCaptcha using cloudflyer."""
@@ -105,7 +124,10 @@ class AternosClient:
 
     def login(self) -> bool:
         """Login to Aternos."""
-        self.session.get(f"{self.BASE_URL}/go")
+        global AJAX_TOKEN
+        AJAX_TOKEN = get_ajax_token(self.session)
+        logger.info(f"AJAX token: {AJAX_TOKEN[:10]}...")
+
         password_md5 = hashlib.md5(PASSWORD.encode()).hexdigest()
 
         # First attempt without captcha
