@@ -1,182 +1,59 @@
 """
 Aternos server auto-renewal script.
-
-Keeps your Aternos server alive by periodically logging in and
-interacting with the panel. Aternos deactivates servers after
-~7 days of inactivity.
-
-Usage:
-    python3 renew.py
-
-Environment variables:
-    ATERNOS_USERNAME - Aternos username
-    ATERNOS_PASSWORD - Aternos password
+Uses SeleniumBase with undetected Chrome to bypass Cloudflare and hCaptcha.
 """
 
 import os
 import sys
-import hashlib
-import random
-import string
-import json
 import time
+import hashlib
+import re
 import logging
-from curl_cffi import requests
+from datetime import datetime, timezone, timedelta
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 USERNAME = os.environ.get("ATERNOS_USERNAME", "")
 PASSWORD = os.environ.get("ATERNOS_PASSWORD", "")
-AJAX_TOKEN = "Kg5pUrtEcWixTBzGuE51"  # fallback
-HCAPTCHA_SITEKEY = "ecf33f35-4807-4dcb-bd09-bcaf874e69cc"
-CLOUDFLYER_URL = os.environ.get("CLOUDFLYER_URL", "http://localhost:3000")
+BASE_URL = "https://aternos.org"
+STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "browser_state")
+SCREENSHOT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "screenshots")
+
+os.makedirs(STATE_DIR, exist_ok=True)
+os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+
+AJAX_TOKEN = "Kg5pUrtEcWixTBzGuE51"
 
 
-def get_ajax_token(session) -> str:
-    """Extract fresh AJAX token from the page."""
-    import re
+def take_screenshot(driver, name):
+    timestamp = datetime.now().strftime('%H%M%S')
+    filename = f"{SCREENSHOT_DIR}/{timestamp}-{name}.png"
     try:
-        resp = session.get(f"https://aternos.org/go")
-        match = re.search(r'AJAX_TOKEN.*?["\']([A-Za-z0-9]{15,25})["\']', resp.text)
-        if match:
-            return match.group(1)
-    except Exception:
+        driver.save_screenshot(filename)
+        logger.info(f"📸 Screenshot: {filename}")
+    except Exception as e:
+        logger.warning(f"Screenshot failed: {e}")
+    return filename
+
+
+def wait_for_url_contains(driver, keyword, timeout=30):
+    start = time.time()
+    while time.time() - start < timeout:
+        if keyword in driver.current_url:
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def check_login_error(driver):
+    try:
+        body = driver.execute_script("return document.body.innerText")
+        if "incorrect" in body.lower() or "invalid" in body.lower():
+            return body[:200]
+    except:
         pass
-    return AJAX_TOKEN
-
-
-def random_string(length: int = 16) -> str:
-    return "".join(random.choices(string.ascii_letters + string.digits, k=length))
-
-
-class AternosClient:
-    BASE_URL = "https://aternos.org"
-
-    def __init__(self):
-        self.session = requests.Session(impersonate="chrome")
-        self.logged_in = False
-
-    def _ajax(self, endpoint: str, data: dict = None) -> dict:
-        """Make an AJAX request to Aternos API."""
-        key = random_string()
-        value = random_string()
-        path = f"/ajax/{endpoint}"
-        self.session.cookies.set(
-            f"ATERNOS_SEC_{key}", value,
-            domain="aternos.org", path=path
-        )
-        url = f"{self.BASE_URL}{path}?TOKEN={AJAX_TOKEN}&SEC={key}:{value}"
-        resp = self.session.post(
-            url,
-            data=data or {},
-            headers={
-                "X-Requested-With": "XMLHttpRequest",
-                "Referer": f"{self.BASE_URL}/go",
-                "Origin": self.BASE_URL,
-            },
-        )
-        try:
-            return resp.json()
-        except Exception:
-            # Response might be HTML (error page) or empty
-            text = resp.text[:200]
-            logger.error(f"Non-JSON response from {endpoint}: {text}")
-            return {"success": False, "error": f"Non-JSON response: {text[:80]}"}
-
-    def _solve_hcaptcha(self) -> str | None:
-        """Solve hCaptcha using cloudflyer."""
-        import requests as req
-        try:
-            resp = req.post(f"{CLOUDFLYER_URL}/createTask", json={
-                "clientKey": "aternos",
-                "type": "hcaptcha",
-                "url": f"{self.BASE_URL}/go",
-                "siteKey": HCAPTCHA_SITEKEY,
-            }, timeout=15)
-            data = resp.json()
-            task_id = data.get("taskId")
-            if not task_id:
-                logger.error(f"hCaptcha task creation failed: {data}")
-                return None
-
-            logger.info(f"hCaptcha task created: {task_id}")
-            for _ in range(60):
-                time.sleep(3)
-                resp = req.post(f"{CLOUDFLYER_URL}/getTaskResult", json={
-                    "clientKey": "aternos",
-                    "taskId": task_id,
-                }, timeout=15)
-                result = resp.json()
-                if result.get("status") == "completed":
-                    token = result.get("result", {}).get("response", {}).get("token") or result.get("result", {}).get("response")
-                    if token:
-                        logger.info(f"hCaptcha solved: {str(token)[:30]}...")
-                        return token
-                    return None
-                elif result.get("status") == "failed":
-                    logger.error(f"hCaptcha solve failed: {result}")
-                    return None
-            return None
-        except Exception as e:
-            logger.error(f"hCaptcha solve error: {e}")
-            return None
-
-    def login(self) -> bool:
-        """Login to Aternos."""
-        global AJAX_TOKEN
-        AJAX_TOKEN = get_ajax_token(self.session)
-        logger.info(f"AJAX token: {AJAX_TOKEN[:10]}...")
-
-        password_md5 = hashlib.md5(PASSWORD.encode()).hexdigest()
-
-        # First attempt without captcha
-        result = self._ajax("account/login", {
-            "username": USERNAME,
-            "password": password_md5,
-        })
-
-        # If captcha required, solve it
-        if result.get("data", {}).get("requireCaptcha"):
-            logger.info("Captcha required, solving...")
-            hcaptcha_token = self._solve_hcaptcha()
-            if not hcaptcha_token:
-                logger.error("Failed to solve hCaptcha")
-                return False
-
-            result = self._ajax("account/login", {
-                "username": USERNAME,
-                "password": password_md5,
-                "hcaptcha": hcaptcha_token,
-            })
-
-        if result.get("success"):
-            self.logged_in = True
-            logger.info(f"✅ Login successful as {USERNAME}")
-            return True
-
-        logger.error(f"❌ Login failed: {result}")
-        return False
-
-    def keep_alive(self) -> bool:
-        """Visit the servers page to keep the account active."""
-        resp = self.session.get(f"{self.BASE_URL}/servers/")
-        if resp.status_code == 200 and "login" not in resp.url.lower():
-            logger.info("✅ Panel visit successful — server kept alive")
-            return True
-        logger.warning(f"⚠️ Panel visit may have failed: {resp.status_code}")
-        return False
-
-    def renew(self) -> bool:
-        """Full renewal cycle: login + keep alive."""
-        if not USERNAME or not PASSWORD:
-            logger.error("ATERNOS_USERNAME and ATERNOS_PASSWORD must be set")
-            return False
-
-        if not self.login():
-            return False
-
-        return self.keep_alive()
+    return None
 
 
 def main():
@@ -184,13 +61,138 @@ def main():
         logger.error("ATERNOS_USERNAME and ATERNOS_PASSWORD must be set")
         sys.exit(1)
 
-    client = AternosClient()
-    success = client.renew()
-    if success:
-        logger.info("🎉 Renewal complete!")
-    else:
-        # Don't exit with error — captcha may clear on next run
-        logger.warning("⚠️ Renewal failed, will retry in 6 hours")
+    logger.info("=" * 50)
+    logger.info("Aternos Auto Renew (SeleniumBase)")
+    logger.info("=" * 50)
+
+    try:
+        from seleniumbase import Driver
+    except ImportError:
+        logger.error("seleniumbase not installed. Run: pip install seleniumbase")
+        sys.exit(1)
+
+    # Browser config
+    driver_kwargs = {
+        "headless": True,
+        "headless2": True,
+        "uc": True,
+        "user_data_dir": STATE_DIR,
+        "window_size": "1280,753",
+        "disable_csp": True,
+    }
+
+    driver = Driver(**driver_kwargs)
+    driver.set_page_load_timeout(60)
+    driver.set_script_timeout(60)
+
+    try:
+        # 1. Visit login page
+        logger.info(f"🌐 Visiting {BASE_URL}/go")
+        driver.get(f"{BASE_URL}/go")
+        time.sleep(5)
+        take_screenshot(driver, "01-login-page")
+
+        # 2. Check if already logged in
+        if "/go" not in driver.current_url and "login" not in driver.current_url.lower():
+            logger.info("✅ Already logged in")
+        else:
+            # 3. Fill login form
+            logger.info("✍️ Filling login form")
+            username_input = driver.find_element("input.username, input[placeholder*='Username']")
+            username_input.clear()
+            username_input.send_keys(USERNAME)
+
+            password_input = driver.find_element("input.password, input[type='password']")
+            password_input.clear()
+            password_input.send_keys(PASSWORD)
+            take_screenshot(driver, "02-credentials")
+
+            # 4. Check for hCaptcha
+            time.sleep(3)
+            if driver.is_element_present("iframe[src*='hcaptcha']"):
+                logger.info("🔒 hCaptcha detected, attempting to solve...")
+                try:
+                    # Try SeleniumBase's built-in hcaptcha solver
+                    driver.uc_gui_click_hcaptcha("iframe[src*='hcaptcha']")
+                    logger.info("✅ hCaptcha clicked")
+                except Exception as e:
+                    logger.warning(f"hCaptcha click failed: {e}")
+                    # Try alternative: click the checkbox directly
+                    try:
+                        driver.execute_script(
+                            "document.querySelector('iframe[src*=\"hcaptcha\"]').click()"
+                        )
+                    except:
+                        pass
+
+                time.sleep(10)
+                take_screenshot(driver, "03-hcaptcha")
+
+                # Check if captcha was solved
+                # Wait for the captcha response
+                for i in range(30):
+                    has_token = driver.execute_script(
+                        'return !!document.querySelector("[name=h-captcha-response]")?.value'
+                    )
+                    if has_token:
+                        logger.info("✅ hCaptcha solved!")
+                        break
+                    time.sleep(2)
+                else:
+                    logger.warning("⚠️ hCaptcha may not be solved, trying anyway...")
+
+            # 5. Click login button
+            logger.info("🚀 Clicking login button")
+            login_btn = driver.find_element("button")
+            for btn in driver.find_elements("button"):
+                try:
+                    text = btn.text.strip().lower()
+                    if "login" in text or "sign in" in text:
+                        login_btn = btn
+                        break
+                except:
+                    pass
+            login_btn.click()
+            take_screenshot(driver, "04-login-clicked")
+
+            # 6. Wait for redirect
+            logger.info("⏳ Waiting for login redirect...")
+            if wait_for_url_contains(driver, "/servers", timeout=30):
+                logger.info("✅ Login successful!")
+            else:
+                error = check_login_error(driver)
+                if error:
+                    logger.error(f"❌ Login failed: {error}")
+                else:
+                    # Check current URL
+                    url = driver.current_url
+                    logger.warning(f"⚠️ Unexpected URL: {url}")
+                    if "go" in url and "login" not in url:
+                        # Might have redirected somewhere else
+                        pass
+                take_screenshot(driver, "ERROR-login")
+
+        # 7. Visit servers page to keep alive
+        logger.info("📡 Visiting servers page...")
+        driver.get(f"{BASE_URL}/servers/")
+        time.sleep(5)
+        take_screenshot(driver, "05-servers")
+
+        body_text = driver.execute_script("return document.body.innerText")
+        if "login" not in driver.current_url.lower():
+            logger.info("✅ Panel visit successful — server kept alive!")
+            logger.info(f"Page content: {body_text[:200]}")
+        else:
+            logger.warning("⚠️ May not be logged in")
+
+    except Exception as e:
+        logger.error(f"❌ Error: {e}")
+        take_screenshot(driver, "ERROR-unknown")
+        sys.exit(1)
+    finally:
+        driver.quit()
+
+    logger.info("🎉 Renewal complete!")
 
 
 if __name__ == "__main__":
