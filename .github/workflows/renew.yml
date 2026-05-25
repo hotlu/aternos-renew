@@ -2,9 +2,8 @@ name: Aternos Auto Renew
 
 on:
   schedule:
-    # Run every 6 hours to keep server alive
     - cron: '0 */6 * * *'
-  workflow_dispatch: # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   renew:
@@ -18,7 +17,9 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install curl_cffi
+        run: |
+          pip install seleniumbase
+          seleniumbase install uc
 
       - name: Renew Aternos server
         env:
