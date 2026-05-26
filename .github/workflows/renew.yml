@@ -16,11 +16,10 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libxml2-dev libxslt-dev
-
       - name: Install Python dependencies
-        run: pip install python-aternos lxml
+        run: |
+          pip install --only-binary :all: lxml
+          pip install python-aternos
 
       - name: Renew Aternos server
         env:
