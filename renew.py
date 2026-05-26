@@ -133,48 +133,56 @@ def main():
 
                 # 6. Click login
                 logger.info("🚀 Submitting login via JavaScript")
-                # Aternos uses JS-based login, trigger it directly
-                sb.execute_script(f'''
-                    var xhr = new XMLHttpRequest();
-                    xhr.open("POST", "/ajax/account/login", true);
-                    xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-                    xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
-                    xhr.onload = function() {{
-                        window._loginResult = JSON.parse(xhr.responseText);
-                    }};
-                    xhr.send("username=" + encodeURIComponent("{USERNAME}") + "&password=" + encodeURIComponent("{PASSWORD}"));
+                # First get the AJAX token from the page
+                ajax_token = sb.execute_script('''
+                    var match = document.documentElement.innerHTML.match(/AJAX_TOKEN.*?"([A-Za-z0-9]{20})"/);
+                    return match ? match[1] : "Kg5pUrtEcWixTBzGuE51";
                 ''')
-                time.sleep(5)
+                logger.info(f"AJAX token: {str(ajax_token)[:10]}...")
                 
-                # Check result
-                login_result = sb.execute_script('return window._loginResult')
+                # Generate SEC token
+                sec_result = sb.execute_script('''
+                    function rs(n) {
+                        var s = "";
+                        var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+                        for(var i=0;i<n;i++) s += chars.charAt(Math.floor(Math.random()*chars.length));
+                        return s;
+                    }
+                    var key = rs(16);
+                    var value = rs(16);
+                    document.cookie = "ATERNOS_SEC_" + key + "=" + value + ";path=/ajax/account/login";
+                    return key + ":" + value;
+                ''')
+                logger.info(f"SEC token: {str(sec_result)[:10]}...")
+                
+                # Do login via JS with proper tokens
+                login_result = sb.execute_script(f'''
+                    return new Promise(function(resolve) {{
+                        var xhr = new XMLHttpRequest();
+                        xhr.open("POST", "/ajax/account/login?TOKEN={ajax_token}&SEC={sec_result}", true);
+                        xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+                        xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
+                        xhr.onload = function() {{
+                            try {{ resolve(JSON.parse(xhr.responseText)); }}
+                            catch(e) {{ resolve({{success:false,error:xhr.responseText}}); }}
+                        }};
+                        xhr.onerror = function() {{ resolve({{success:false,error:"network error"}}); }};
+                        xhr.send("username=" + encodeURIComponent("{USERNAME}") + "&password=" + encodeURIComponent("{PASSWORD}"));
+                    }});
+                ''')
                 logger.info(f"Login result: {login_result}")
                 
                 if login_result and login_result.get('success'):
-                    logger.info("✅ Login successful via JS!")
-                elif login_result and login_result.get('data', {}).get('requireCaptcha'):
+                    logger.info("✅ Login successful!")
+                elif login_result and login_result.get('data') and login_result['data'].get('requireCaptcha'):
                     logger.info("🔒 Captcha required, clicking...")
                     try:
                         sb.uc_gui_click_captcha()
                         time.sleep(10)
                     except:
                         pass
-                    # Retry login
-                    sb.execute_script(f'''
-                        var xhr = new XMLHttpRequest();
-                        xhr.open("POST", "/ajax/account/login", true);
-                        xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-                        xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
-                        xhr.onload = function() {{
-                            window._loginResult2 = JSON.parse(xhr.responseText);
-                        }};
-                        xhr.send("username=" + encodeURIComponent("{USERNAME}") + "&password=" + encodeURIComponent("{PASSWORD}"));
-                    ''')
-                    time.sleep(5)
-                    login_result2 = sb.execute_script('return window._loginResult2')
-                    logger.info(f"Login result 2: {login_result2}")
                 else:
-                    logger.warning(f"Login may have failed: {login_result}")
+                    logger.warning(f"Login response: {login_result}")
                 
                 time.sleep(3)
 
