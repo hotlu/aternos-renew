@@ -20,7 +20,7 @@ jobs:
         run: |
           pip install --only-binary :all: lxml
           pip install --no-deps python-aternos
-          pip install cloudscraper js2py regex pyjsparser requests
+          pip install cloudscraper js2py regex pyjsparser requests websockets
 
       - name: Renew Aternos server
         env:
