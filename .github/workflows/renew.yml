@@ -16,13 +16,11 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install system dependencies
+      - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc libxml2-dev libxslt1-dev python3-dev
-
-      - name: Install Python dependencies
-        run: pip install python-aternos
+          pip install --only-binary :all: lxml
+          pip install --no-deps python-aternos
+          pip install cloudscraper js2py regex pyjsparser requests
 
       - name: Renew Aternos server
         env:
