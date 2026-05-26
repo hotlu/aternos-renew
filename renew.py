@@ -92,18 +92,26 @@ def main():
 
         # Wait for Cloudflare challenge to resolve
         logger.info("⏳ Waiting for Cloudflare challenge...")
-        for i in range(30):
+        for i in range(60):
             time.sleep(3)
             body = driver.execute_script("return document.body.innerText")
-            if "just a moment" not in body.lower() and "checking" not in body.lower():
+            if "just a moment" not in body.lower() and "security verification" not in body.lower() and "verif" not in body.lower():
                 logger.info(f"✅ Cloudflare passed (attempt {i+1})")
                 break
-            if i == 15:
-                # Try clicking Cloudflare checkbox if present
+            # Try clicking Turnstile/Cloudflare checkbox every 5 attempts
+            if i % 5 == 0:
                 try:
                     driver.uc_gui_click_cf()
+                    logger.info(f"Clicked Cloudflare checkbox (attempt {i+1})")
                 except:
-                    pass
+                    # Try clicking iframe directly
+                    try:
+                        driver.execute_script('''
+                            var iframe = document.querySelector("iframe[src*='challenges']");
+                            if(iframe) { iframe.click(); }
+                        ''')
+                    except:
+                        pass
         else:
             take_screenshot(driver, "ERROR-cloudflare-timeout")
             raise Exception("Cloudflare challenge timeout")
