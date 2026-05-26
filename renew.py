@@ -89,7 +89,26 @@ def main():
         # 1. Visit login page
         logger.info(f"🌐 Visiting {BASE_URL}/go")
         driver.get(f"{BASE_URL}/go")
-        time.sleep(5)
+
+        # Wait for Cloudflare challenge to resolve
+        logger.info("⏳ Waiting for Cloudflare challenge...")
+        for i in range(30):
+            time.sleep(3)
+            body = driver.execute_script("return document.body.innerText")
+            if "just a moment" not in body.lower() and "checking" not in body.lower():
+                logger.info(f"✅ Cloudflare passed (attempt {i+1})")
+                break
+            if i == 15:
+                # Try clicking Cloudflare checkbox if present
+                try:
+                    driver.uc_gui_click_cf()
+                except:
+                    pass
+        else:
+            take_screenshot(driver, "ERROR-cloudflare-timeout")
+            raise Exception("Cloudflare challenge timeout")
+
+        time.sleep(3)
         take_screenshot(driver, "01-login-page")
 
         # 2. Check if already logged in
