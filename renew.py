@@ -111,6 +111,25 @@ def main():
         time.sleep(3)
         take_screenshot(driver, "01-login-page")
 
+        # Debug: check what's on the page
+        page_url = driver.current_url
+        page_text = driver.execute_script("return document.body.innerText")
+        page_html_len = driver.execute_script("return document.documentElement.outerHTML.length")
+        logger.info(f"URL: {page_url}")
+        logger.info(f"HTML length: {page_html_len}")
+        logger.info(f"Page text: {page_text[:300]}")
+
+        # Wait for login form to appear
+        logger.info("⏳ Waiting for login form...")
+        for i in range(20):
+            if driver.is_element_present("input.username") or driver.is_element_present("input[type='password']"):
+                logger.info(f"✅ Login form found (attempt {i+1})")
+                break
+            time.sleep(2)
+        else:
+            take_screenshot(driver, "ERROR-no-login-form")
+            raise Exception(f"Login form not found. Page text: {page_text[:200]}")
+
         # 2. Check if already logged in
         if "/go" not in driver.current_url and "login" not in driver.current_url.lower():
             logger.info("✅ Already logged in")
