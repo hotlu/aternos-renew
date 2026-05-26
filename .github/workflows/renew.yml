@@ -16,10 +16,10 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Python dependencies
+      - name: Install dependencies
         run: |
-          pip install --only-binary :all: lxml
-          pip install python-aternos
+          pip install --only-binary :all: lxml cloudscraper js2py regex pyjsparser requests
+          pip install --no-deps python-aternos
 
       - name: Renew Aternos server
         env:
