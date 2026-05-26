@@ -132,22 +132,51 @@ def main():
                         logger.warning(f"hCaptcha click failed: {e}")
 
                 # 6. Click login
-                logger.info("🚀 Clicking login button")
-                # Try multiple selectors for the login button
-                clicked = False
-                for selector in ['button.login-button', 'button[type="submit"]', 'button']:
+                logger.info("🚀 Submitting login via JavaScript")
+                # Aternos uses JS-based login, trigger it directly
+                sb.execute_script(f'''
+                    var xhr = new XMLHttpRequest();
+                    xhr.open("POST", "/ajax/account/login", true);
+                    xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+                    xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
+                    xhr.onload = function() {{
+                        window._loginResult = JSON.parse(xhr.responseText);
+                    }};
+                    xhr.send("username=" + encodeURIComponent("{USERNAME}") + "&password=" + encodeURIComponent("{PASSWORD}"));
+                ''')
+                time.sleep(5)
+                
+                # Check result
+                login_result = sb.execute_script('return window._loginResult')
+                logger.info(f"Login result: {login_result}")
+                
+                if login_result and login_result.get('success'):
+                    logger.info("✅ Login successful via JS!")
+                elif login_result and login_result.get('data', {}).get('requireCaptcha'):
+                    logger.info("🔒 Captcha required, clicking...")
                     try:
-                        if sb.is_element_present(selector):
-                            sb.click(selector)
-                            clicked = True
-                            logger.info(f"Clicked: {selector}")
-                            break
+                        sb.uc_gui_click_captcha()
+                        time.sleep(10)
                     except:
                         pass
-                if not clicked:
-                    # Try JavaScript click
-                    sb.execute_script("document.querySelector('button').click()")
-                time.sleep(10)
+                    # Retry login
+                    sb.execute_script(f'''
+                        var xhr = new XMLHttpRequest();
+                        xhr.open("POST", "/ajax/account/login", true);
+                        xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+                        xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
+                        xhr.onload = function() {{
+                            window._loginResult2 = JSON.parse(xhr.responseText);
+                        }};
+                        xhr.send("username=" + encodeURIComponent("{USERNAME}") + "&password=" + encodeURIComponent("{PASSWORD}"));
+                    ''')
+                    time.sleep(5)
+                    login_result2 = sb.execute_script('return window._loginResult2')
+                    logger.info(f"Login result 2: {login_result2}")
+                else:
+                    logger.warning(f"Login may have failed: {login_result}")
+                
+                time.sleep(3)
 
                 # 7. Wait for redirect
                 for i in range(30):
