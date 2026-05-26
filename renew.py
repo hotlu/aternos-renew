@@ -89,6 +89,14 @@ def main():
                     logger.error("❌ Cloudflare challenge timeout")
                     return
 
+            # Wait for cookies to be set after Cloudflare
+            logger.info("⏳ Waiting for cookies to settle...")
+            time.sleep(8)
+
+            # Reload the page to ensure cookies are active
+            sb.uc_open_with_reconnect(f"{BASE_URL}/go", reconnect_time=5.0)
+            time.sleep(5)
+
             time.sleep(3)
 
             # 3. Check if already logged in
@@ -110,8 +118,9 @@ def main():
                     return
 
                 sb.type("input.username, input[placeholder*='Username']", USERNAME)
+                time.sleep(1)
                 sb.type("input.password, input[type='password']", PASSWORD)
-                time.sleep(2)
+                time.sleep(3)
 
                 # 5. Check for hCaptcha
                 if sb.is_element_present("iframe[src*='hcaptcha']"):
@@ -124,8 +133,21 @@ def main():
 
                 # 6. Click login
                 logger.info("🚀 Clicking login button")
-                sb.click("button")
-                time.sleep(5)
+                # Try multiple selectors for the login button
+                clicked = False
+                for selector in ['button.login-button', 'button[type="submit"]', 'button']:
+                    try:
+                        if sb.is_element_present(selector):
+                            sb.click(selector)
+                            clicked = True
+                            logger.info(f"Clicked: {selector}")
+                            break
+                    except:
+                        pass
+                if not clicked:
+                    # Try JavaScript click
+                    sb.execute_script("document.querySelector('button').click()")
+                time.sleep(10)
 
                 # 7. Wait for redirect
                 for i in range(30):
